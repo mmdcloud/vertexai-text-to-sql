@@ -166,7 +166,7 @@ module "frontend_artifact_registry" {
   location      = var.location
   description   = "frontend code repository"
   repository_id = "frontend-repo"
-  shell_command = "bash ${path.cwd}/../src/frontend/artifact_push.sh ${data.google_project.project.project_id}"
+  shell_command = "bash ${path.cwd}/../src/frontend/artifact_push.sh ${data.google_project.project.project_id} ${var.location}"
 }
 
 module "backend_artifact_registry" {
@@ -174,7 +174,7 @@ module "backend_artifact_registry" {
   location      = var.location
   description   = "backend code repository"
   repository_id = "backend-repo"
-  shell_command = "bash ${path.cwd}/../src/backend/artifact_push.sh ${data.google_project.project.project_id}"
+  shell_command = "bash ${path.cwd}/../src/backend/artifact_push.sh ${data.google_project.project.project_id} ${var.location}"
 }
 
 #---------------------------------------------------------------
@@ -184,7 +184,7 @@ module "backend_artifact_registry" {
 module "frontend_service" {
   source                           = "./modules/cloud-run"
   deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress                          = "INGRESS_TRAFFIC_ALL"
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = "${var.location}"
   min_instance_count               = 2
@@ -214,7 +214,7 @@ module "frontend_service" {
 module "backend_service" {
   source                           = "./modules/cloud-run"
   deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress                          = "INGRESS_TRAFFIC_ALL"
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = "${var.location}"
   min_instance_count               = 2
@@ -230,7 +230,7 @@ module "backend_service" {
   ]
   containers = [
     {
-      port              = 8080
+      port              = 5000
       env               = []
       volume_mounts     = []
       cpu_idle          = true
