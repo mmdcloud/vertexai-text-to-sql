@@ -47,7 +47,7 @@ module "vpc" {
   ]
   firewall_data = [
     {
-      name          = "consumer-vpc-firewall-ssh"
+      name          = "vpc-firewall-ssh"
       source_ranges = ["0.0.0.0/0"]
       allow_list = [
         {
@@ -57,7 +57,7 @@ module "vpc" {
       ]
     },
     {
-      name          = "consumer-vpc-firewall-http"
+      name          = "vpc-firewall-http"
       source_ranges = ["0.0.0.0/0"]
       allow_list = [
         {
@@ -85,6 +85,26 @@ module "db_sql_username_secret" {
   secret_data = tostring(data.vault_generic_secret.sql.data["username"])
   secret_id   = "db_username_secret"
   depends_on  = [module.apis]
+}
+
+#---------------------------------------------------------------
+# Cloud Storage
+#---------------------------------------------------------------
+
+module "carshub_media_bucket_code" {
+  source   = "../modules/gcs"
+  location = var.location
+  name     = "carshub-media-code"
+  cors     = []
+  contents = [
+    {
+      name        = "carshub_media_function_code.zip"
+      source_path = "${path.root}/../../../files/carshub_media_function_code.zip"
+      content     = ""
+    }
+  ]
+  force_destroy               = true
+  uniform_bucket_level_access = true
 }
 
 #---------------------------------------------------------------
@@ -146,7 +166,7 @@ module "frontend_artifact_registry" {
   location      = var.location
   description   = "frontend code repository"
   repository_id = "frontend-repo"
-  shell_command = "bash ${path.cwd}/../src/artifact_push.sh ${data.google_project.project.project_id}"
+  shell_command = "bash ${path.cwd}/../src/frontend/artifact_push.sh ${data.google_project.project.project_id}"
 }
 
 module "backend_artifact_registry" {
@@ -154,7 +174,7 @@ module "backend_artifact_registry" {
   location      = var.location
   description   = "backend code repository"
   repository_id = "backend-repo"
-  shell_command = "bash ${path.cwd}/../src/artifact_push.sh ${data.google_project.project.project_id}"
+  shell_command = "bash ${path.cwd}/../src/backend/artifact_push.sh ${data.google_project.project.project_id}"
 }
 
 #---------------------------------------------------------------
@@ -180,7 +200,7 @@ module "frontend_service" {
   ]
   containers = [
     {
-      port              = 8080
+      port              = 3000
       env               = []
       volume_mounts     = []
       cpu_idle          = true
