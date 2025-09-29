@@ -1,2 +1,4 @@
 terraform/.terraform*
 terraform/terraform.*
+src/frontend/node_modules/
+src/frontend/dist/

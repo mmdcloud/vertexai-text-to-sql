@@ -1,12 +1,17 @@
 # Getting project information
 data "google_project" "project" {}
 
+# Registering vault provider
+data "vault_generic_secret" "sql" {
+  path = "secret/sql"
+}
+
 #---------------------------------------------------------------
 # APIs
 #---------------------------------------------------------------
 
 module "apis" {
-  source = "../modules/apis"
+  source = "./modules/apis"
   apis = [
     "servicenetworking.googleapis.com",
     "vpcaccess.googleapis.com",
@@ -18,10 +23,67 @@ module "apis" {
     "eventarc.googleapis.com",
     "sqladmin.googleapis.com",
     "binaryauthorization.googleapis.com",
-    "storagetransfer.googleapis.com"
+    "storagetransfer.googleapis.com",
+    "identitytoolkit.googleapis.com"
   ]
   disable_on_destroy = false
   project_id         = data.google_project.project.project_id
+}
+
+#---------------------------------------------------------------
+# Google Identity Platform
+#---------------------------------------------------------------
+
+resource "google_identity_platform_config" "identity_platform" {
+  autodelete_anonymous_users = true
+  sign_in {
+    allow_duplicate_emails = true
+
+    anonymous {
+        enabled = true
+    }
+    email {
+        enabled = true
+        password_required = false
+    }
+    phone_number {
+        enabled = true
+        test_phone_numbers = {
+            "+11231231234" = "000000"
+        }
+    }
+  }
+  sms_region_config {
+    allowlist_only {
+      allowed_regions = [
+        "US",
+        "CA",
+      ]
+    }
+  }
+  blocking_functions {
+    triggers {
+      event_type = "beforeSignIn"
+      function_uri = "https://us-east1-my-project.cloudfunctions.net/before-sign-in"
+    }
+    forward_inbound_credentials {
+      refresh_token = true
+      access_token = true
+      id_token = true
+    }
+  }
+  quota {
+    sign_up_quota_config {
+      quota = 1000
+      start_time = "2014-10-02T15:01:23Z"
+      quota_duration = "7200s"
+    }
+  }
+  authorized_domains = [
+    "localhost",
+    "my-project.firebaseapp.com",
+    "my-project.web.app",
+  ]
 }
 
 #---------------------------------------------------------------
@@ -29,12 +91,11 @@ module "apis" {
 #---------------------------------------------------------------
 
 module "vpc" {
-  source                          = "../modules/vpc"
+  source                          = "./modules/vpc"
   vpc_name                        = "vpc"
   delete_default_routes_on_create = false
   auto_create_subnetworks         = false
   routing_mode                    = "REGIONAL"
-  region                          = var.location
   subnets = [
     {
       name                     = "db-subnet"
@@ -91,15 +152,15 @@ module "db_sql_username_secret" {
 # Cloud Storage
 #---------------------------------------------------------------
 
-module "carshub_media_bucket_code" {
+module "sql_assets_bucket_code" {
   source   = "../modules/gcs"
   location = var.location
-  name     = "carshub-media-code"
+  name     = "sql-assets"
   cors     = []
   contents = [
     {
-      name        = "carshub_media_function_code.zip"
-      source_path = "${path.root}/../../../files/carshub_media_function_code.zip"
+      name        = "sql-assets.zip"
+      source_path = "${path.root}/../../../files/sql-assets.zip"
       content     = ""
     }
   ]
@@ -162,7 +223,7 @@ module "db" {
 #---------------------------------------------------------------
 
 module "frontend_artifact_registry" {
-  source        = "../modules/artifact-registry"
+  source        = "./modules/artifact-registry"
   location      = var.location
   description   = "frontend code repository"
   repository_id = "frontend-repo"
@@ -170,7 +231,7 @@ module "frontend_artifact_registry" {
 }
 
 module "backend_artifact_registry" {
-  source        = "../modules/artifact-registry"
+  source        = "./modules/artifact-registry"
   location      = var.location
   description   = "backend code repository"
   repository_id = "backend-repo"
@@ -180,6 +241,19 @@ module "backend_artifact_registry" {
 #---------------------------------------------------------------
 # Cloud Run Services
 #---------------------------------------------------------------
+
+module "cloud_run_service_account" {
+  source        = "./modules/service-account"
+  account_id    = "cloud-run-sa"
+  display_name  = "Cloud Run Service Account"
+  project_id    = data.google_project.project.project_id
+  member_prefix = "serviceAccount"
+  permissions = [
+    "roles/secretmanager.secretAccessor",
+    "roles/storage.admin",
+    "roles/iam.serviceAccountTokenCreator"
+  ]
+}
 
 module "frontend_service" {
   source                           = "./modules/cloud-run"
@@ -200,7 +274,7 @@ module "frontend_service" {
   ]
   containers = [
     {
-      port              = 3000
+      port              = 80
       env               = []
       volume_mounts     = []
       cpu_idle          = true
