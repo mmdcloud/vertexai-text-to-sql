@@ -1,15 +1,18 @@
+# ---------------------------------------------------------------
 # Getting project information
+# ---------------------------------------------------------------
 data "google_project" "project" {}
 
+# ---------------------------------------------------------------
 # Registering vault provider
+# ---------------------------------------------------------------
 data "vault_generic_secret" "sql" {
   path = "secret/sql"
 }
 
-#---------------------------------------------------------------
+# ---------------------------------------------------------------
 # APIs
-#---------------------------------------------------------------
-
+# ---------------------------------------------------------------
 module "apis" {
   source = "./modules/apis"
   apis = [
@@ -33,24 +36,23 @@ module "apis" {
 #---------------------------------------------------------------
 # Google Identity Platform
 #---------------------------------------------------------------
-
 resource "google_identity_platform_config" "identity_platform" {
   autodelete_anonymous_users = true
   sign_in {
     allow_duplicate_emails = true
 
     anonymous {
-        enabled = true
+      enabled = true
     }
     email {
-        enabled = true
-        password_required = false
+      enabled           = true
+      password_required = false
     }
     phone_number {
-        enabled = true
-        test_phone_numbers = {
-            "+11231231234" = "000000"
-        }
+      enabled = true
+      test_phone_numbers = {
+        "+11231231234" = "000000"
+      }
     }
   }
   sms_region_config {
@@ -63,19 +65,19 @@ resource "google_identity_platform_config" "identity_platform" {
   }
   blocking_functions {
     triggers {
-      event_type = "beforeSignIn"
+      event_type   = "beforeSignIn"
       function_uri = "https://us-east1-my-project.cloudfunctions.net/before-sign-in"
     }
     forward_inbound_credentials {
       refresh_token = true
-      access_token = true
-      id_token = true
+      access_token  = true
+      id_token      = true
     }
   }
   quota {
     sign_up_quota_config {
-      quota = 1000
-      start_time = "2014-10-02T15:01:23Z"
+      quota          = 1000
+      start_time     = "2014-10-02T15:01:23Z"
       quota_duration = "7200s"
     }
   }
@@ -89,7 +91,6 @@ resource "google_identity_platform_config" "identity_platform" {
 #---------------------------------------------------------------
 # VPC Configuration
 #---------------------------------------------------------------
-
 module "vpc" {
   source                          = "./modules/vpc"
   vpc_name                        = "vpc"
@@ -133,7 +134,6 @@ module "vpc" {
 #---------------------------------------------------------------
 # Secrets Manager
 #---------------------------------------------------------------
-
 module "db_sql_password_secret" {
   source      = "../modules/secret-manager"
   secret_data = tostring(data.vault_generic_secret.sql.data["password"])
@@ -151,8 +151,7 @@ module "db_sql_username_secret" {
 #---------------------------------------------------------------
 # Cloud Storage
 #---------------------------------------------------------------
-
-module "sql_assets_bucket_code" {
+module "sql_assets_bucket" {
   source   = "../modules/gcs"
   location = var.location
   name     = "sql-assets"
@@ -160,7 +159,7 @@ module "sql_assets_bucket_code" {
   contents = [
     {
       name        = "sql-assets.zip"
-      source_path = "${path.root}/../../../files/sql-assets.zip"
+      source_path = "${path.module}/files/sql-assets.zip"
       content     = ""
     }
   ]
@@ -171,7 +170,6 @@ module "sql_assets_bucket_code" {
 #---------------------------------------------------------------
 # Cloud SQL
 #---------------------------------------------------------------
-
 module "db" {
   source                      = "../modules/cloud-sql"
   name                        = "db-instance"
@@ -241,7 +239,6 @@ module "backend_artifact_registry" {
 #---------------------------------------------------------------
 # Cloud Run Services
 #---------------------------------------------------------------
-
 module "cloud_run_service_account" {
   source        = "./modules/service-account"
   account_id    = "cloud-run-sa"
@@ -260,7 +257,7 @@ module "frontend_service" {
   deletion_protection              = false
   ingress                          = "INGRESS_TRAFFIC_ALL"
   service_account                  = module.cloud_run_service_account.sa_email
-  location                         = "${var.location}"
+  location                         = var.location
   min_instance_count               = 2
   max_instance_count               = 5
   max_instance_request_concurrency = 80
@@ -290,7 +287,7 @@ module "backend_service" {
   deletion_protection              = false
   ingress                          = "INGRESS_TRAFFIC_ALL"
   service_account                  = module.cloud_run_service_account.sa_email
-  location                         = "${var.location}"
+  location                         = var.location
   min_instance_count               = 2
   max_instance_count               = 5
   max_instance_request_concurrency = 80
@@ -313,4 +310,51 @@ module "backend_service" {
     }
   ]
   depends_on = [module.backend_artifact_registry]
+}
+
+#---------------------------------------------------------------
+# Vertex AI configuration
+#---------------------------------------------------------------
+resource "google_service_account" "vertex_sa" {
+  account_id   = "vertex-textsql-sa"
+  display_name = "Vertex AI Text-to-SQL SA"
+}
+
+resource "google_project_iam_member" "vertex_sa_roles" {
+  for_each = toset([
+    "roles/aiplatform.admin",
+    "roles/storage.objectAdmin"
+  ])
+  project = var.project_id
+  role    = each.key
+  member  = "serviceAccount:${google_service_account.vertex_sa.email}"
+}
+
+resource "google_vertex_ai_index" "schema_index" {
+  display_name        = "textsql-schema-index"
+  description         = "Schema embeddings for Text-to-SQL context"
+  metadata_schema_uri = "gs://google-cloud-aiplatform/schema/matching_engine/metadata/v1beta1/index.yaml"
+  metadata {
+    contents_delta_uri = "gs://${module.sql_assets_bucket.bucket_name}/schema/embeddings"
+    config {
+      dimensions                  = 768
+      approximate_neighbors_count = 100
+      distance_measure_type       = "COSINE_DISTANCE"
+    }
+  }
+}
+
+resource "google_vertex_ai_index_endpoint" "schema_endpoint" {
+  display_name = "textsql-schema-endpoint"
+  description  = "Endpoint for retrieving similar schema context"
+}
+
+resource "google_vertex_ai_index_endpoint_deployed_index" "schema_deploy" {
+  index_endpoint    = google_vertex_ai_index_endpoint.schema_endpoint.name
+  deployed_index_id = "schema-embeddings"
+  index             = google_vertex_ai_index.schema_index.name
+  automatic_resources {
+    min_replica_count = 1
+    max_replica_count = 2
+  }
 }

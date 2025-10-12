@@ -1,6 +1,6 @@
 #!/bin/bash
 mkdir backend-code
-cp -r ../../../../src/backend/* backend-code/
+cp -r ../src/backend/* backend-code/
 cd backend-code
 
 docker buildx build --tag backend-service --file ./Dockerfile .
